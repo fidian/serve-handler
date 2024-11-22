@@ -1,4 +1,7 @@
-<!DOCTYPE html>
+import { encodeHTML } from './encode-html.js';
+
+export function errorTemplate(spec) {
+    return `<!DOCTYPE html>
 
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no"/>
@@ -112,8 +115,10 @@
 <body>
   <main>
     <section>
-      <span>{{=it.statusCode}}</span>
-	  <p>{{=it.message}}</p>
+      <span>${encodeHTML(spec.statusCode)}</span>
+	  <p>${encodeHTML(spec.message)}</p>
     </section>
   </main>
 </body>
+`;
+}

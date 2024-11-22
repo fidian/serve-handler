@@ -1,3 +1,18 @@
+# @fidian/serve-handler
+
+This is a fork of [serve-handler](https://github.com/vercel/serve-handler) that eliminates some annoyances, such as the punycode warning and using a vulnerable version of path-to-regexp. Ideally, the kind folk at @vercel would take in these changes in order to have a better library, but in the meantime the Node community needs a place where they can get a patched library.
+
+If you do decide to contribute to this offshoot, please make sure to include tests that verify your code works as expected.
+
+Changes from original:
+
+ * Eliminate punycode warning.
+ * Use updated path-to-regexp.
+ * Remove template build step, yarn, and commands that didn't work upon reinstall.
+ * Fix tests and updated them to close the server when done and fix locations.
+
+----
+
 # serve-handler
 
 [![Tests](https://github.com/vercel/serve-handler/actions/workflows/tests.yaml/badge.svg)](https://github.com/vercel/serve-handler/actions/workflows/tests.yaml)

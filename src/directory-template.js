@@ -1,10 +1,14 @@
-<!DOCTYPE html>
+import { encodeHTML } from "./encode-html.js";
+import { iterate } from "./iterate.js";
+
+export function directoryTemplate(spec) {
+    return `<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <title>Files within {{!it.directory}}</title>
+    <title>Files within ${encodeHTML(spec.directory)}</title>
 
     <style>
 		body {
@@ -141,19 +145,22 @@
         <h1>
           <i>Index of&nbsp;</i>
 
-          {{~it.paths :value:index}}
-            <a href="/{{!value.url}}">{{!value.name}}</a>
-          {{~}}
+		  ${iterate(spec.paths, (value) => `<a href="/${encodeHTML(value.url)}">${encodeHTML(value.name)}</a>`)}
         </h1>
       </header>
 
       <ul id="files">
-        {{~it.files :value:index}}
+	    ${iterate(
+            spec.files,
+            (value, index) => `
           <li>
-            <a href="{{!value.relative}}" title="{{!value.title}}" class="{{!value.type}} {{!value.ext}}">{{!value.base}}</a>
+            <a href="${encodeHTML(value.relative)}" title="${encodeHTML(value.title)}" class="${encodeHTML(value.type)} ${encodeHTML(value.ext)}">${encodeHTML(value.base)}</a>
           </li>
-        {{~}}
+		`
+        )}
       </ul>
 	</main>
   </body>
 </html>
+`;
+}

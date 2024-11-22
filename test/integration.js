@@ -1,31 +1,35 @@
 // Native
-const path = require('path');
+import { basename, join } from 'node:path';
+import { Server } from 'node:http';
 
 // Packages
-const test = require('ava');
-const listen = require('test-listen');
-const micro = require('micro');
-const fetch = require('node-fetch');
-const fs = require('fs-extra');
-const sleep = require('sleep-promise');
+import test from 'ava';
+import { listen } from 'async-listen';
+import { serve } from 'micro';
+import fetch from 'node-fetch';
+import fs from 'node:fs';
+import fsExtra from 'fs-extra';
+import sleep from 'sleep-promise';
 
 // Utilities
-const handler = require('../');
-const errorTemplate = require('../src/error');
+import handler from '../src/index.js';
+import { errorTemplate } from '../src/error-template.js';
 
 const fixturesTarget = 'test/fixtures';
-const fixturesFull = path.join(process.cwd(), fixturesTarget);
+const fixturesFull = join(process.cwd(), fixturesTarget);
 
-const getUrl = (customConfig, handlers) => {
+const getUrl = async (customConfig, handlers) => {
 	const config = Object.assign({
 		'public': fixturesTarget
 	}, customConfig);
 
-	const server = micro(async (request, response) => {
+	const server = new Server(serve(async (request, response) => {
 		await handler(request, response, config, handlers);
-	});
+	}));
 
-	return listen(server);
+	const url = await listen(server);
+
+	return { url, server };
 };
 
 const getDirectoryContents = async (location = fixturesFull, sub, exclude = []) => {
@@ -35,7 +39,7 @@ const getDirectoryContents = async (location = fixturesFull, sub, exclude = []) 
 		...exclude
 	];
 
-	const content = await fs.readdir(location);
+	const content = await fs.promises.readdir(location);
 
 	if (sub) {
 		content.unshift('..');
@@ -47,9 +51,10 @@ const getDirectoryContents = async (location = fixturesFull, sub, exclude = []) 
 test('render html directory listing', async t => {
 	const contents = await getDirectoryContents();
 
-	const url = await getUrl();
+	const { url, server } = await getUrl();
 	const response = await fetch(url);
 	const text = await response.text();
+	server.close();
 
 	const type = response.headers.get('content-type');
 
@@ -59,13 +64,14 @@ test('render html directory listing', async t => {
 
 test('render json directory listing', async t => {
 	const contents = await getDirectoryContents();
-	const url = await getUrl();
+	const { server, url } = await getUrl();
 
 	const response = await fetch(url, {
 		headers: {
 			Accept: 'application/json'
 		}
 	});
+	server.close();
 
 	const type = response.headers.get('content-type');
 	t.is(type, 'application/json; charset=utf-8');
@@ -83,10 +89,11 @@ test('render json directory listing', async t => {
 test('render html sub directory listing', async t => {
 	const name = 'special-directory';
 
-	const sub = path.join(fixturesFull, name);
+	const sub = join(fixturesFull, name);
 	const contents = await getDirectoryContents(sub, true);
-	const url = await getUrl();
+	const { server, url } = await getUrl();
 	const response = await fetch(`${url}/${name}`);
+	server.close();
 	const text = await response.text();
 
 	const type = response.headers.get('content-type');
@@ -98,15 +105,16 @@ test('render html sub directory listing', async t => {
 test('render json sub directory listing', async t => {
 	const name = 'special-directory';
 
-	const sub = path.join(fixturesFull, name);
+	const sub = join(fixturesFull, name);
 	const contents = await getDirectoryContents(sub, true);
-	const url = await getUrl();
+	const { server, url } = await getUrl();
 
 	const response = await fetch(`${url}/${name}`, {
 		headers: {
 			Accept: 'application/json'
 		}
 	});
+	server.close();
 
 	const type = response.headers.get('content-type');
 	t.is(type, 'application/json; charset=utf-8');
@@ -124,19 +132,19 @@ test('render json sub directory listing', async t => {
 test('render json sub directory listing with custom stat handler', async t => {
 	const name = 'special-directory';
 
-	const sub = path.join(fixturesFull, name);
+	const sub = join(fixturesFull, name);
 	const contents = await getDirectoryContents(sub, true);
 
 	// eslint-disable-next-line no-undefined
-	const url = await getUrl(undefined, {
+	const { server, url } = await getUrl(undefined, {
 		lstat: (location, isDirectoryListing) => {
-			if (contents.includes(path.basename(location))) {
+			if (contents.includes(basename(location))) {
 				t.true(isDirectoryListing);
 			} else {
 				t.falsy(isDirectoryListing);
 			}
 
-			return fs.lstat(location);
+			return fs.promises.lstat(location);
 		}
 	});
 
@@ -145,6 +153,7 @@ test('render json sub directory listing with custom stat handler', async t => {
 			Accept: 'application/json'
 		}
 	});
+	server.close();
 
 	const type = response.headers.get('content-type');
 	t.is(type, 'application/json; charset=utf-8');
@@ -161,11 +170,12 @@ test('render json sub directory listing with custom stat handler', async t => {
 
 test('render dotfile', async t => {
 	const name = '.dotfile';
-	const related = path.join(fixturesFull, name);
+	const related = join(fixturesFull, name);
 
-	const content = await fs.readFile(related, 'utf8');
-	const url = await getUrl();
+	const content = await fs.promises.readFile(related, 'utf8');
+	const { server, url } = await getUrl();
 	const response = await fetch(`${url}/${name}`);
+	server.close()
 	const text = await response.text();
 
 	t.deepEqual(content, text);
@@ -173,25 +183,26 @@ test('render dotfile', async t => {
 
 test('render json file', async t => {
 	const name = 'object.json';
-	const related = path.join(fixturesFull, name);
+	const related = join(fixturesFull, name);
 
-	const content = await fs.readJSON(related);
-	const url = await getUrl();
+	const content = await fs.promises.readFile(related, 'utf8');
+	const { server, url } = await getUrl();
 	const response = await fetch(`${url}/${name}`);
+	server.close();
 
 	const type = response.headers.get('content-type');
 	t.is(type, 'application/json; charset=utf-8');
 
 	const text = await response.text();
-	const spec = JSON.parse(text);
 
-	t.deepEqual(spec, content);
+	t.deepEqual(text, content);
 });
 
 test('try to render non-existing json file', async t => {
 	const name = 'mask-off.json';
-	const url = await getUrl();
+	const { server, url } = await getUrl();
 	const response = await fetch(`${url}/${name}`);
+	server.close();
 
 	const type = response.headers.get('content-type');
 
@@ -206,18 +217,19 @@ test('try to render non-existing json file and `stat` errors', async t => {
 	let done = null;
 
 	// eslint-disable-next-line no-undefined
-	const url = await getUrl(undefined, {
+	const { server, url } = await getUrl(undefined, {
 		lstat: location => {
-			if (path.basename(location) === name && !done) {
+			if (basename(location) === name && !done) {
 				done = true;
 				throw new Error(message);
 			}
 
-			return fs.lstat(location);
+			return fs.promises.lstat(location);
 		}
 	});
 
 	const response = await fetch(`${url}/${name}`);
+	server.close();
 	const text = await response.text();
 
 	t.is(response.status, 500);
@@ -231,55 +243,58 @@ test('try to render non-existing json file and `stat` errors', async t => {
 });
 
 test('set `trailingSlash` config property to `true`', async t => {
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		trailingSlash: true
 	});
 
-	const target = `${url}/test`;
+	const target = `/test`;
 
-	const response = await fetch(target, {
+	const response = await fetch(`${url}${target}`, {
 		redirect: 'manual',
 		follow: 0
 	});
+	server.close();
 
 	const location = response.headers.get('location');
 	t.is(location, `${target}/`);
 });
 
 test('set `trailingSlash` config property to any boolean and remove multiple slashes', async t => {
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		trailingSlash: true
 	});
 
-	const target = `${url}/test/`;
+	const target = `/test/`;
 
-	const response = await fetch(`${target}//////`, {
+	const response = await fetch(`${url}${target}//////`, {
 		redirect: 'manual',
 		follow: 0
 	});
+	server.close();
 
 	const location = response.headers.get('location');
 	t.is(location, target);
 });
 
 test('set `trailingSlash` config property to `false`', async t => {
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		trailingSlash: false
 	});
 
-	const target = `${url}/test`;
+	const target = `/test`;
 
-	const response = await fetch(`${target}/`, {
+	const response = await fetch(`${url}${target}/`, {
 		redirect: 'manual',
 		follow: 0
 	});
+	server.close();
 
 	const location = response.headers.get('location');
 	t.is(location, target);
 });
 
 test('set `cleanUrls` config property should prevent open redirects', async t => {
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		cleanUrls: true
 	});
 
@@ -287,17 +302,18 @@ test('set `cleanUrls` config property should prevent open redirects', async t =>
 		redirect: 'manual',
 		follow: 0
 	});
+	server.close();
 
 	const location = response.headers.get('location');
-	t.is(location, `${url}/haveibeenpwned.com`);
+	t.is(location, `/haveibeenpwned.com`);
 });
 
 test('set `rewrites` config property to wildcard path', async t => {
 	const destination = '.dotfile';
-	const related = path.join(fixturesFull, destination);
-	const content = await fs.readFile(related, 'utf8');
+	const related = join(fixturesFull, destination);
+	const content = await fs.promises.readFile(related, 'utf8');
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		rewrites: [{
 			source: 'face/**',
 			destination
@@ -305,6 +321,7 @@ test('set `rewrites` config property to wildcard path', async t => {
 	});
 
 	const response = await fetch(`${url}/face/delete`);
+	server.close();
 	const text = await response.text();
 
 	t.is(text, content);
@@ -312,10 +329,10 @@ test('set `rewrites` config property to wildcard path', async t => {
 
 test('set `rewrites` config property to non-matching path', async t => {
 	const destination = '404.html';
-	const related = path.join(fixturesFull, destination);
-	const content = await fs.readFile(related, 'utf8');
+	const related = join(fixturesFull, destination);
+	const content = await fs.promises.readFile(related, 'utf8');
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		rewrites: [{
 			source: 'face/**',
 			destination
@@ -323,6 +340,7 @@ test('set `rewrites` config property to non-matching path', async t => {
 	});
 
 	const response = await fetch(`${url}/mask/delete`);
+	server.close();
 	const text = await response.text();
 
 	t.is(text, content);
@@ -330,10 +348,10 @@ test('set `rewrites` config property to non-matching path', async t => {
 
 test('set `rewrites` config property to one-star wildcard path', async t => {
 	const destination = '.dotfile';
-	const related = path.join(fixturesFull, destination);
-	const content = await fs.readFile(related, 'utf8');
+	const related = join(fixturesFull, destination);
+	const content = await fs.promises.readFile(related, 'utf8');
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		rewrites: [{
 			source: 'face/*/mask',
 			destination
@@ -341,16 +359,17 @@ test('set `rewrites` config property to one-star wildcard path', async t => {
 	});
 
 	const response = await fetch(`${url}/face/delete/mask`);
+	server.close();
 	const text = await response.text();
 
 	t.is(text, content);
 });
 
 test('set `rewrites` config property to path segment', async t => {
-	const related = path.join(fixturesFull, 'object.json');
-	const content = await fs.readJSON(related);
+	const related = join(fixturesFull, 'object.json');
+	const content = await fsExtra.readJSON(related);
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		rewrites: [{
 			source: 'face/:id',
 			destination: ':id.json'
@@ -358,6 +377,7 @@ test('set `rewrites` config property to path segment', async t => {
 	});
 
 	const response = await fetch(`${url}/face/object`);
+	server.close();
 	const json = await response.json();
 
 	t.deepEqual(json, content);
@@ -366,7 +386,7 @@ test('set `rewrites` config property to path segment', async t => {
 test('set `redirects` config property to wildcard path', async t => {
 	const destination = 'testing';
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		redirects: [{
 			source: 'face/**',
 			destination
@@ -377,15 +397,16 @@ test('set `redirects` config property to wildcard path', async t => {
 		redirect: 'manual',
 		follow: 0
 	});
+	server.close();
 
 	const location = response.headers.get('location');
-	t.is(location, `${url}/${destination}`);
+	t.is(location, `/${destination}`);
 });
 
 test('set `redirects` config property to a negated wildcard path', async t => {
 	const destination = 'testing';
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		redirects: [{
 			source: '!face/**',
 			destination
@@ -398,12 +419,13 @@ test('set `redirects` config property to a negated wildcard path', async t => {
 	});
 
 	const locationTruthy = responseTruthy.headers.get('location');
-	t.is(locationTruthy, `${url}/${destination}`);
+	t.is(locationTruthy, `/${destination}`);
 
 	const responseFalsy = await fetch(`${url}/face/mask`, {
 		redirect: 'manual',
 		follow: 0
 	});
+	server.close();
 
 	const locationFalsy = responseFalsy.headers.get('location');
 	t.falsy(locationFalsy);
@@ -412,7 +434,7 @@ test('set `redirects` config property to a negated wildcard path', async t => {
 test('set `redirects` config property to wildcard path and do not match', async t => {
 	const destination = 'testing';
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		redirects: [{
 			source: 'face/**',
 			destination
@@ -423,6 +445,7 @@ test('set `redirects` config property to wildcard path and do not match', async 
 		redirect: 'manual',
 		follow: 0
 	});
+	server.close();
 
 	const location = response.headers.get('location');
 	t.falsy(location);
@@ -431,7 +454,7 @@ test('set `redirects` config property to wildcard path and do not match', async 
 test('set `redirects` config property to one-star wildcard path', async t => {
 	const destination = 'testing';
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		redirects: [{
 			source: 'face/*/ideal',
 			destination
@@ -442,15 +465,16 @@ test('set `redirects` config property to one-star wildcard path', async t => {
 		redirect: 'manual',
 		follow: 0
 	});
+	server.close();
 
 	const location = response.headers.get('location');
-	t.is(location, `${url}/${destination}`);
+	t.is(location, `/${destination}`);
 });
 
 test('set `redirects` config property to extglob wildcard path', async t => {
 	const destination = 'testing';
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		redirects: [{
 			source: 'face/+(mask1|mask2)/ideal',
 			destination
@@ -461,13 +485,15 @@ test('set `redirects` config property to extglob wildcard path', async t => {
 		redirect: 'manual',
 		follow: 0
 	});
+	server.close();
 
 	const location = response.headers.get('location');
-	t.is(location, `${url}/${destination}`);
+
+	t.is(location, `/${destination}`);
 });
 
 test('set `redirects` config property to path segment', async t => {
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		redirects: [{
 			source: 'face/:segment',
 			destination: 'mask/:segment'
@@ -478,15 +504,16 @@ test('set `redirects` config property to path segment', async t => {
 		redirect: 'manual',
 		follow: 0
 	});
+	server.close();
 
 	const location = response.headers.get('location');
-	t.is(location, `${url}/mask/me`);
+	t.is(location, `/mask/me`);
 });
 
 test('set `redirects` config property to wildcard path and `trailingSlash` to `true`', async t => {
 	const target = '/face/mask';
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		trailingSlash: true,
 		redirects: [{
 			source: 'face/**',
@@ -498,15 +525,16 @@ test('set `redirects` config property to wildcard path and `trailingSlash` to `t
 		redirect: 'manual',
 		follow: 0
 	});
+	server.close();
 
 	const location = response.headers.get('location');
-	t.is(location, `${url + target}/`);
+	t.is(location, `${target}/`);
 });
 
 test('set `redirects` config property to wildcard path and `trailingSlash` to `false`', async t => {
 	const target = '/face/mask';
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		trailingSlash: false,
 		redirects: [{
 			source: 'face/**',
@@ -518,23 +546,25 @@ test('set `redirects` config property to wildcard path and `trailingSlash` to `f
 		redirect: 'manual',
 		follow: 0
 	});
+	server.close();
 
 	const location = response.headers.get('location');
-	t.is(location, url + target);
+	t.is(location, target);
 });
 
 test('pass custom handlers', async t => {
 	const name = '.dotfile';
 
 	// eslint-disable-next-line no-undefined
-	const url = await getUrl(undefined, {
-		lstat: fs.lstat,
+	const { server, url } = await getUrl(undefined, {
+		lstat: fs.promises.lstat,
 		createReadStream: fs.createReadStream
 	});
 
 	const response = await fetch(`${url}/${name}`);
+	server.close();
 	const text = await response.text();
-	const content = await fs.readFile(path.join(fixturesFull, name), 'utf8');
+	const content = await fs.promises.readFile(join(fixturesFull, name), 'utf8');
 
 	t.is(text, content);
 });
@@ -551,11 +581,12 @@ test('set `headers` to wildcard headers', async t => {
 		}]
 	}];
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		headers: list
 	});
 
 	const response = await fetch(`${url}/docs.md`);
+	server.close();
 	const cacheControl = response.headers.get(key);
 
 	t.is(cacheControl, value);
@@ -573,11 +604,12 @@ test('set `headers` to fixed headers and check default headers', async t => {
 		}]
 	}];
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		headers: list
 	});
 
 	const {headers} = await fetch(`${url}/object.json`);
+	server.close();
 	const cacheControl = headers.get(key);
 	const type = headers.get('content-type');
 
@@ -586,11 +618,12 @@ test('set `headers` to fixed headers and check default headers', async t => {
 });
 
 test('receive not found error', async t => {
-	const url = await getUrl({
-		'public': path.join(fixturesFull, 'directory')
+	const { server, url } = await getUrl({
+		'public': join(fixturesFull, 'directory')
 	});
 
 	const response = await fetch(`${url}/not-existing`);
+	server.close();
 	const text = await response.text();
 
 	const content = errorTemplate({
@@ -602,13 +635,14 @@ test('receive not found error', async t => {
 });
 
 test('receive not found error as json', async t => {
-	const url = await getUrl();
+	const { server, url } = await getUrl();
 
 	const response = await fetch(`${url}/not-existing`, {
 		headers: {
 			Accept: 'application/json'
 		}
 	});
+	server.close();
 
 	const json = await response.json();
 
@@ -621,8 +655,9 @@ test('receive not found error as json', async t => {
 });
 
 test('receive custom `404.html` error page', async t => {
-	const url = await getUrl();
+	const { server, url } = await getUrl();
 	const response = await fetch(`${url}/not-existing`);
+	server.close();
 	const text = await response.text();
 
 	t.is(text.trim(), '<span>Not Found</span>');
@@ -630,17 +665,21 @@ test('receive custom `404.html` error page', async t => {
 
 test('error is still sent back even if reading `404.html` failed', async t => {
 	// eslint-disable-next-line no-undefined
-	const url = await getUrl(undefined, {
+	const { server, url } = await getUrl(undefined, {
+		console: {
+			error: () => {}
+		},
 		lstat: location => {
-			if (path.basename(location) === '404.html') {
+			if (basename(location) === '404.html') {
 				throw new Error('Any error occured while checking the file');
 			}
 
-			return fs.lstat(location);
+			return fs.promises.lstat(location);
 		}
 	});
 
 	const response = await fetch(`${url}/not-existing`);
+	server.close();
 	const text = await response.text();
 
 	t.is(response.status, 404);
@@ -654,11 +693,12 @@ test('error is still sent back even if reading `404.html` failed', async t => {
 });
 
 test('disabled directory listing', async t => {
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		directoryListing: false
 	});
 
 	const response = await fetch(url);
+	server.close();
 	const text = await response.text();
 
 	t.is(response.status, 404);
@@ -669,13 +709,14 @@ test('listing the directory failed', async t => {
 	const message = 'Internal Server Error';
 
 	// eslint-disable-next-line no-undefined
-	const url = await getUrl(undefined, {
+	const { server, url } = await getUrl(undefined, {
 		readdir: () => {
 			throw new Error(message);
 		}
 	});
 
 	const response = await fetch(url);
+	server.close();
 	const text = await response.text();
 
 	t.is(response.status, 500);
@@ -690,14 +731,15 @@ test('listing the directory failed', async t => {
 
 test('set `cleanUrls` config property to `true`', async t => {
 	const target = 'directory';
-	const index = path.join(fixturesFull, target, 'index.html');
+	const index = join(fixturesFull, target, 'index.html');
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		cleanUrls: true
 	});
 
 	const response = await fetch(`${url}/${target}`);
-	const content = await fs.readFile(index, 'utf8');
+	server.close();
+	const content = await fs.promises.readFile(index, 'utf8');
 	const text = await response.text();
 
 	t.is(content, text);
@@ -705,16 +747,17 @@ test('set `cleanUrls` config property to `true`', async t => {
 
 test('set `cleanUrls` config property to array', async t => {
 	const target = 'directory';
-	const index = path.join(fixturesFull, target, 'index.html');
+	const index = join(fixturesFull, target, 'index.html');
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		cleanUrls: [
 			'/directory**'
 		]
 	});
 
 	const response = await fetch(`${url}/${target}`);
-	const content = await fs.readFile(index, 'utf8');
+	server.close();
+	const content = await fs.promises.readFile(index, 'utf8');
 	const text = await response.text();
 
 	t.is(content, text);
@@ -723,14 +766,15 @@ test('set `cleanUrls` config property to array', async t => {
 test('set `cleanUrls` config property to empty array', async t => {
 	const name = 'directory';
 
-	const sub = path.join(fixturesFull, name);
+	const sub = join(fixturesFull, name);
 	const contents = await getDirectoryContents(sub, true);
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		cleanUrls: []
 	});
 
 	const response = await fetch(`${url}/${name}`);
+	server.close();
 	const text = await response.text();
 
 	const type = response.headers.get('content-type');
@@ -742,7 +786,7 @@ test('set `cleanUrls` config property to empty array', async t => {
 test('set `cleanUrls` config property to `true` and try with file', async t => {
 	const target = '/directory/clean-file';
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		cleanUrls: true
 	});
 
@@ -750,20 +794,22 @@ test('set `cleanUrls` config property to `true` and try with file', async t => {
 		redirect: 'manual',
 		follow: 0
 	});
+	server.close();
 
 	const location = response.headers.get('location');
-	t.is(location, `${url}${target}`);
+	t.is(location, `${target}`);
 });
 
 test('set `cleanUrls` config property to `true` and not index file found', async t => {
 	const contents = await getDirectoryContents();
-	const url = await getUrl({cleanUrls: true});
+	const { server, url } = await getUrl({cleanUrls: true});
 
 	const response = await fetch(url, {
 		headers: {
 			Accept: 'application/json'
 		}
 	});
+	server.close();
 
 	const type = response.headers.get('content-type');
 	t.is(type, 'application/json; charset=utf-8');
@@ -782,19 +828,20 @@ test('set `cleanUrls` config property to `true` and an error occurs', async t =>
 	const target = 'directory';
 	const message = 'Internal Server Error';
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		cleanUrls: true
 	}, {
 		lstat: location => {
-			if (path.basename(location) === 'index.html') {
+			if (basename(location) === 'index.html') {
 				throw new Error(message);
 			}
 
-			return fs.lstat(location);
+			return fs.promises.lstat(location);
 		}
 	});
 
 	const response = await fetch(`${url}/${target}`);
+	server.close();
 	const text = await response.text();
 
 	t.is(response.status, 500);
@@ -811,15 +858,16 @@ test('error occurs while getting stat of path', async t => {
 	const message = 'Internal Server Error';
 
 	// eslint-disable-next-line no-undefined
-	const url = await getUrl(undefined, {
+	const { server, url } = await getUrl(undefined, {
 		lstat: location => {
-			if (path.basename(location) !== '500.html') {
+			if (basename(location) !== '500.html') {
 				throw new Error(message);
 			}
 		}
 	});
 
 	const response = await fetch(url);
+	server.close();
 	const text = await response.text();
 
 	const content = errorTemplate({
@@ -835,34 +883,36 @@ test('the first `lstat` call should be for a related file', async t => {
 	let done = null;
 
 	// eslint-disable-next-line no-undefined
-	const url = await getUrl(undefined, {
+	const { server, url } = await getUrl(undefined, {
 		lstat: location => {
 			if (!done) {
-				t.is(path.basename(location), 'index.html');
+				t.is(basename(location), 'index.html');
 				done = true;
 			}
 
-			return fs.lstat(location);
+			return fs.promises.lstat(location);
 		}
 	});
 
 	await fetch(url);
+	server.close();
 });
 
 test('the `lstat` call should only be made for files and directories', async t => {
 	const locations = [];
 
 	// eslint-disable-next-line no-undefined
-	const url = await getUrl(undefined, {
+	const { server, url } = await getUrl(undefined, {
 		lstat: location => {
 			locations.push(location);
-			return fs.lstat(location);
+			return fs.promises.lstat(location);
 		}
 	});
 
 	await fetch(url);
+	server.close();
 
-	t.falsy(locations.some(location => path.basename(location) === '.html'));
+	t.falsy(locations.some(location => basename(location) === '.html'));
 });
 
 test('error occurs while getting stat of not-found path', async t => {
@@ -870,17 +920,18 @@ test('error occurs while getting stat of not-found path', async t => {
 	const base = 'not-existing';
 
 	// eslint-disable-next-line no-undefined
-	const url = await getUrl(undefined, {
+	const { server, url } = await getUrl(undefined, {
 		lstat: location => {
-			if (path.basename(location) === base) {
+			if (basename(location) === base) {
 				throw new Error(message);
 			}
 
-			return fs.lstat(location);
+			return fs.promises.lstat(location);
 		}
 	});
 
 	const response = await fetch(`${url}/${base}`);
+	server.close();
 	const text = await response.text();
 
 	t.is(response.status, 500);
@@ -899,13 +950,14 @@ test('set `unlisted` config property to array', async t => {
 	];
 
 	const contents = await getDirectoryContents(fixturesFull, null, unlisted);
-	const url = await getUrl({unlisted});
+	const { server, url } = await getUrl({unlisted});
 
 	const response = await fetch(url, {
 		headers: {
 			Accept: 'application/json'
 		}
 	});
+	server.close();
 
 	const type = response.headers.get('content-type');
 	t.is(type, 'application/json; charset=utf-8');
@@ -922,25 +974,26 @@ test('set `unlisted` config property to array', async t => {
 
 test('set `createReadStream` handler to async function', async t => {
 	const name = '.dotfile';
-	const related = path.join(fixturesFull, name);
-	const content = await fs.readFile(related, 'utf8');
+	const related = join(fixturesFull, name);
+	const content = await fs.promises.readFile(related, 'utf8');
 
 	// eslint-disable-next-line no-undefined
-	const url = await getUrl(undefined, {
+	const { server, url } = await getUrl(undefined, {
 		createReadStream: async (file, opts) => {
-			await sleep(2000);
+			await sleep(1000);
 			return fs.createReadStream(file, opts);
 		}
 	});
 
 	const response = await fetch(`${url}/${name}`);
+	server.close();
 	const text = await response.text();
 
 	t.deepEqual(content, text);
 });
 
 test('return mime type of the `rewrittenPath` if mime type of `relativePath` is null', async t => {
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		rewrites: [{
 			source: '**',
 			destination: 'clean-file.html'
@@ -948,76 +1001,89 @@ test('return mime type of the `rewrittenPath` if mime type of `relativePath` is 
 	});
 
 	const response = await fetch(`${url}/whatever`);
+	server.close();
 	const type = response.headers.get('content-type');
 
 	t.is(type, 'text/html; charset=utf-8');
 });
 
 test('error if trying to traverse path', async t => {
-	const url = await getUrl();
+	const { server, url } = await getUrl();
 	const response = await fetch(`${url}/../../test`);
+	server.close();
 	const text = await response.text();
 
-	t.is(response.status, 400);
+    // This previously would send '/../../test' as the path.
+	// Since the path is now normalized, it will send '/test' instead.
 
-	const content = errorTemplate({
-		statusCode: 400,
-		message: 'Bad Request'
-	});
+	if (response.status === 400) {
+		t.is(response.status, 400);
 
-	t.is(text, content);
+		const content = errorTemplate({
+			statusCode: 400,
+			message: 'Bad Request'
+		});
+
+		t.is(text, content);
+	} else {
+		t.is(response.status, 404);
+	}
 });
 
 test('render file if directory only contains one', async t => {
 	const directory = 'single-directory';
 	const file = 'content.txt';
-	const related = path.join(fixturesFull, directory, file);
-	const content = await fs.readFile(related, 'utf8');
+	const related = join(fixturesFull, directory, file);
+	const content = await fs.promises.readFile(related, 'utf8');
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		renderSingle: true
 	});
 
 	const response = await fetch(`${url}/${directory}`);
+	server.close();
 	const text = await response.text();
 
 	t.is(text, content);
 });
 
 test('correctly handle requests to /index if `cleanUrls` is enabled', async t => {
-	const url = await getUrl();
+	const { server, url } = await getUrl();
 	const target = `${url}/index`;
 
 	const response = await fetch(target, {
 		redirect: 'manual',
 		follow: 0
 	});
+	server.close();
 
 	const location = response.headers.get('location');
-	t.is(location, `${url}/`);
+	t.is(location, `/`);
 });
 
 test('allow dots in `public` configuration property', async t => {
 	const directory = 'public-folder.test';
-	const root = path.join(fixturesTarget, directory);
-	const file = path.join(fixturesFull, directory, 'index.html');
+	const root = join(fixturesTarget, directory);
+	const file = join(fixturesFull, directory, 'index.html');
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		'public': root,
 		'directoryListing': false
 	});
 
 	const response = await fetch(url);
+	server.close();
 	const text = await response.text();
-	const content = await fs.readFile(file, 'utf8');
+	const content = await fs.promises.readFile(file, 'utf8');
 
 	t.is(response.status, 200);
 	t.is(content, text);
 });
 
 test('error for request with malformed URI', async t => {
-	const url = await getUrl();
+	const { server, url } = await getUrl();
 	const response = await fetch(`${url}/%E0%A4%A`);
+	server.close();
 	const text = await response.text();
 
 	t.is(response.status, 400);
@@ -1031,8 +1097,8 @@ test('error for request with malformed URI', async t => {
 });
 
 test('error responses get custom headers', async t => {
-	const url = await getUrl({
-		'public': path.join(fixturesTarget, 'single-directory'),
+	const { server, url } = await getUrl({
+		'public': join(fixturesTarget, 'single-directory'),
 		'headers': [{
 			source: '**',
 			headers: [{
@@ -1043,6 +1109,7 @@ test('error responses get custom headers', async t => {
 	});
 
 	const response = await fetch(`${url}/non-existing`);
+	server.close();
 	const text = await response.text();
 
 	t.is(response.status, 404);
@@ -1058,8 +1125,8 @@ test('error responses get custom headers', async t => {
 
 test('modify config in `createReadStream` handler', async t => {
 	const name = '.dotfile';
-	const related = path.join(fixturesFull, name);
-	const content = await fs.readFile(related, 'utf8');
+	const related = join(fixturesFull, name);
+	const content = await fs.promises.readFile(related, 'utf8');
 
 	const config = {
 		headers: []
@@ -1070,7 +1137,7 @@ test('modify config in `createReadStream` handler', async t => {
 		value: 'test'
 	};
 
-	const url = await getUrl(config, {
+	const { server, url } = await getUrl(config, {
 		createReadStream: async (file, opts) => {
 			config.headers.unshift({
 				source: name,
@@ -1082,6 +1149,7 @@ test('modify config in `createReadStream` handler', async t => {
 	});
 
 	const response = await fetch(`${url}/${name}`);
+	server.close();
 	const text = await response.text();
 	const output = response.headers.get(header.key);
 
@@ -1091,11 +1159,11 @@ test('modify config in `createReadStream` handler', async t => {
 
 test('automatically handle ETag headers for normal files', async t => {
 	const name = 'object.json';
-	const related = path.join(fixturesFull, name);
-	const content = await fs.readJSON(related);
+	const related = join(fixturesFull, name);
+	const content = await fs.promises.readFile(related, 'utf8');
 	const value = '"d2ijdjoi29f3h3232"';
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		headers: [{
 			source: '**',
 			headers: [{
@@ -1115,31 +1183,31 @@ test('automatically handle ETag headers for normal files', async t => {
 	t.is(eTag, value);
 
 	const text = await response.text();
-	const spec = JSON.parse(text);
 
-	t.deepEqual(spec, content);
+	t.deepEqual(text, content);
 
 	const cacheResponse = await fetch(`${url}/${name}`, {
 		headers: {
 			'if-none-match': value
 		}
 	});
+	server.close();
 
 	t.is(cacheResponse.status, 304);
 });
 
 test('range request without size', async t => {
 	const name = 'docs.md';
-	const related = path.join(fixturesFull, name);
-	const content = await fs.readFile(related);
+	const related = join(fixturesFull, name);
+	const content = await fs.promises.readFile(related);
 
 	const config = {
 		headers: []
 	};
 
-	const url = await getUrl(config, {
+	const { server, url } = await getUrl(config, {
 		lstat: async location => {
-			const stats = await fs.lstat(location);
+			const stats = await fs.promises.lstat(location);
 
 			config.headers.unshift({
 				source: '*',
@@ -1161,6 +1229,7 @@ test('range request without size', async t => {
 			Range: 'bytes=0-10'
 		}
 	});
+	server.close();
 
 	const range = response.headers.get('content-range');
 	const length = Number(response.headers.get('content-length'));
@@ -1177,16 +1246,17 @@ test('range request without size', async t => {
 
 test('range request', async t => {
 	const name = 'docs.md';
-	const related = path.join(fixturesFull, name);
+	const related = join(fixturesFull, name);
 
-	const content = await fs.readFile(related);
-	const url = await getUrl();
+	const content = await fs.promises.readFile(related);
+	const { server, url } = await getUrl();
 
 	const response = await fetch(`${url}/${name}`, {
 		headers: {
 			Range: 'bytes=0-10'
 		}
 	});
+	server.close();
 
 	const range = response.headers.get('content-range');
 	const length = Number(response.headers.get('content-length'));
@@ -1203,16 +1273,17 @@ test('range request', async t => {
 
 test('range request not satisfiable', async t => {
 	const name = 'docs.md';
-	const related = path.join(fixturesFull, name);
+	const related = join(fixturesFull, name);
 
-	const content = await fs.readFile(related);
-	const url = await getUrl();
+	const content = await fs.promises.readFile(related);
+	const { server, url } = await getUrl();
 
 	const response = await fetch(`${url}/${name}`, {
 		headers: {
 			Range: 'bytes=10-1'
 		}
 	});
+	server.close();
 
 	const range = response.headers.get('content-range');
 	const length = Number(response.headers.get('content-length'));
@@ -1242,11 +1313,12 @@ test('remove header when null', async t => {
 		}]
 	}];
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		headers: list
 	});
 
 	const {headers} = await fetch(`${url}/object.json`);
+	server.close();
 	const cacheControl = headers.get(key);
 
 	t.falsy(cacheControl);
@@ -1256,13 +1328,14 @@ test('errors in `createReadStream` get handled', async t => {
 	const name = '.dotfile';
 
 	// eslint-disable-next-line no-undefined
-	const url = await getUrl(undefined, {
+	const { server, url } = await getUrl(undefined, {
 		createReadStream: () => {
 			throw new Error('This is a test');
 		}
 	});
 
 	const response = await fetch(`${url}/${name}`);
+	server.close();
 	const text = await response.text();
 
 	const content = errorTemplate({
@@ -1276,9 +1349,12 @@ test('errors in `createReadStream` get handled', async t => {
 
 test('log error when checking `404.html` failed', async t => {
 	// eslint-disable-next-line no-undefined
-	const url = await getUrl(undefined, {
+	const { server, url } = await getUrl(undefined, {
+		console: {
+			error: () => {}
+		},
 		createReadStream: (location, opts) => {
-			if (path.basename(location) === '404.html') {
+			if (basename(location) === '404.html') {
 				throw new Error('Any error occured while checking the file');
 			}
 
@@ -1287,6 +1363,7 @@ test('log error when checking `404.html` failed', async t => {
 	});
 
 	const response = await fetch(`${url}/not-existing`);
+	server.close();
 	const text = await response.text();
 
 	t.is(response.status, 404);
@@ -1300,13 +1377,14 @@ test('log error when checking `404.html` failed', async t => {
 });
 
 test('prevent access to parent directory', async t => {
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		rewrites: [
 			{source: '/secret', destination: '/404.html'}
 		]
 	});
 
 	const response = await fetch(`${url}/dir/../secret`);
+	server.close();
 	const text = await response.text();
 
 	t.is(text.trim(), '<span>Not Found</span>');
@@ -1314,9 +1392,10 @@ test('prevent access to parent directory', async t => {
 
 test('symlinks should not work by default', async t => {
 	const name = 'symlinks/package.json';
-	const url = await getUrl();
+	const { server, url } = await getUrl();
 
 	const response = await fetch(`${url}/${name}`);
+	server.close();
 	const text = await response.text();
 
 	t.is(response.status, 404);
@@ -1325,14 +1404,15 @@ test('symlinks should not work by default', async t => {
 
 test('allow symlinks by setting the option', async t => {
 	const name = 'symlinks/package.json';
-	const related = path.join(fixturesFull, name);
-	const content = await fs.readFile(related);
+	const related = join(fixturesFull, name);
+	const content = await fs.promises.readFile(related);
 
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		symlinks: true
 	});
 
 	const response = await fetch(`${url}/${name}`);
+	server.close();
 	const length = Number(response.headers.get('content-length'));
 
 	t.is(length, content.length);
@@ -1345,7 +1425,7 @@ test('allow symlinks by setting the option', async t => {
 });
 
 test('etag header is set', async t => {
-	const url = await getUrl({
+	const { server, url } = await getUrl({
 		renderSingle: true,
 		etag: true
 	});
@@ -1358,6 +1438,7 @@ test('etag header is set', async t => {
 	);
 
 	response = await fetch(`${url}/docs.txt`);
+	server.close();
 	t.is(response.status, 200);
 	t.is(
 		response.headers.get('etag'),

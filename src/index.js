@@ -1,23 +1,23 @@
 // Native
-const {promisify} = require('util');
-const path = require('path');
-const {createHash} = require('crypto');
-const {realpath, lstat, createReadStream, readdir} = require('fs');
+import path from 'path';
+import { createHash } from 'crypto';
+import { createReadStream } from 'fs';
+import { realpath, lstat, readdir } from 'fs/promises';
 
 // Packages
-const url = require('fast-url-parser');
-const slasher = require('./glob-slash');
-const minimatch = require('minimatch');
-const pathToRegExp = require('path-to-regexp');
-const mime = require('mime-types');
-const bytes = require('bytes');
-const contentDisposition = require('content-disposition');
-const isPathInside = require('path-is-inside');
-const parseRange = require('range-parser');
+import url from 'url';
+import slasher from 'glob-slash';
+import { minimatch } from 'minimatch';
+import pathToRegexp from 'path-to-regexp';
+import mime from 'mime-types';
+import bytes from 'bytes';
+import contentDisposition from 'content-disposition';
+import isPathInside from 'path-is-inside';
+import parseRange from 'range-parser';
 
 // Other
-const directoryTemplate = require('./directory');
-const errorTemplate = require('./error');
+import { directoryTemplate } from './directory-template.js';
+import { errorTemplate } from './error-template.js';
 
 const etags = new Map();
 
@@ -44,7 +44,7 @@ const sourceMatches = (source, requestPath, allowSegments) => {
 
 	if (allowSegments) {
 		const normalized = slashed.replace('*', '(.*)');
-		const expression = pathToRegExp(normalized, keys);
+		const expression = pathToRegexp(normalized, keys);
 
 		results = expression.exec(resolvedPath);
 
@@ -78,7 +78,7 @@ const toTarget = (source, destination, previousPath) => {
 	const props = {};
 	const {protocol} = url.parse(destination);
 	const normalizedDest = protocol ? destination : slasher(destination);
-	const toPath = pathToRegExp.compile(normalizedDest);
+	const toPath = pathToRegexp.compile(normalizedDest);
 
 	for (let index = 0; index < keys.length; index++) {
 		const {name} = keys[index];
@@ -147,16 +147,16 @@ const shouldRedirect = (decodedPath, {redirects = [], trailingSlash}, cleanUrl) 
 		const isTrailed = decodedPath.endsWith('/');
 		const isDotfile = name.startsWith('.');
 
-		let target = null;
+		let target = decodedPath;
 
 		if (!trailingSlash && isTrailed) {
-			target = decodedPath.slice(0, -1);
+			target = target.slice(0, -1);
 		} else if (trailingSlash && !isTrailed && !ext && !isDotfile) {
-			target = `${decodedPath}/`;
+			target = `${target}/`;
 		}
 
-		if (decodedPath.indexOf('//') > -1) {
-			target = decodedPath.replace(/\/+/g, '/');
+		if (target.indexOf('//') > -1) {
+			target = target.replace(/\/+/g, '/');
 		}
 
 		if (target) {
@@ -469,7 +469,7 @@ const sendError = async (absolutePath, response, acceptsJSON, current, handlers,
 
 	/* istanbul ignore next */
 	if (original && process.env.NODE_ENV !== 'test') {
-		console.error(original);
+		handlers.console.error(original);
 	}
 
 	response.statusCode = statusCode;
@@ -495,7 +495,7 @@ const sendError = async (absolutePath, response, acceptsJSON, current, handlers,
 		stats = await handlers.lstat(errorPage);
 	} catch (err) {
 		if (err.code !== 'ENOENT') {
-			console.error(err);
+			handlers.console.error(err);
 		}
 	}
 
@@ -512,7 +512,7 @@ const sendError = async (absolutePath, response, acceptsJSON, current, handlers,
 
 			return;
 		} catch (err) {
-			console.error(err);
+			handlers.console.error(err);
 		}
 	}
 
@@ -538,14 +538,15 @@ const internalError = async (...args) => {
 };
 
 const getHandlers = methods => Object.assign({
-	lstat: promisify(lstat),
-	realpath: promisify(realpath),
+	console: console,
+	lstat: lstat,
+	realpath: realpath,
 	createReadStream,
-	readdir: promisify(readdir),
+	readdir: readdir,
 	sendError
 }, methods);
 
-module.exports = async (request, response, config = {}, methods = {}) => {
+export default async (request, response, config = {}, methods = {}) => {
 	const cwd = process.cwd();
 	const current = config.public ? path.resolve(cwd, config.public) : cwd;
 	const handlers = getHandlers(methods);
